@@ -4,9 +4,23 @@
  * Copyright C.T.Co Ltd, 15/25 Jurkalnes Street, Riga LV-1046, Latvia. All rights reserved.
  */
 
+buildscript {
+    //old approach to use dependencies, as gradle-nexus-staging-plugin isn't published to gradle.org plugins.
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath "io.codearte.gradle.nexus:gradle-nexus-staging-plugin:0.5.3"
+        classpath "net.researchgate:gradle-release:2.3.5"
+    }
+}
+
 apply plugin: 'java'
 apply plugin: 'application'
 apply plugin: 'maven'
+apply plugin: 'signing'
+apply plugin: 'io.codearte.nexus-staging'
+apply plugin: 'net.researchgate.release'
 
 repositories {
     mavenCentral()
@@ -24,3 +38,106 @@ mainClassName = 'lv.ctco.scm.App'
 test {
     useJUnit()
 }
+
+task javadocJar(type: Jar) {
+    classifier = 'javadoc'
+    from javadoc
+}
+
+task sourcesJar(type: Jar) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+
+artifacts {
+    archives javadocJar, sourcesJar
+}
+
+// Configuration for artifact signing and publishing
+
+def hasSigningProperties = project.hasProperty("signing.keyId") && project.hasProperty("signing.password") && project.hasProperty("signing.secretKeyRingFile")
+
+signing {
+    required { hasSigningProperties && gradle.taskGraph.hasTask("uploadArchives") }
+    sign configurations.archives
+}
+
+def ossrhUsername="null"
+if (project.hasProperty("ossrhUsername")) {
+    ossrhUsername=project.findProperty("ossrhUsername")
+}
+
+def ossrhPassword="null"
+if (project.hasProperty("ossrhPassword")) {
+    ossrhPassword=project.findProperty("ossrhPassword")
+}
+
+uploadArchives {
+    repositories {
+        mavenDeployer {
+            beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
+
+            repository(url: "https://oss.sonatype.org/service/local/staging/deploy/maven2/") {
+                authentication(userName: ossrhUsername, password: ossrhPassword)
+            }
+
+            snapshotRepository(url: "https://oss.sonatype.org/content/repositories/snapshots/") {
+                authentication(userName: ossrhUsername, password: ossrhPassword)
+            }
+
+            pom.project {
+                name 'Public CI testing'
+                packaging 'jar'
+                description 'Testing public ci in scope of snap-ci analog research'
+                url 'https://github.com/igorssh/publicci-test'
+
+                scm {
+                    connection 'scm:git:git@github.com:igorssh/publicci-test.git'
+                    developerConnection 'scm:git:git@github.com:igorssh/publicci-test.git'
+                    url 'https://github.com/igorssh/publicci-test'
+                }
+
+                licenses {
+                    license {
+                        name 'The Apache License, Version 2.0'
+                        url 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+
+                developers {
+                    developer {
+                        id 'igorssh'
+                        name 'Igor Shevchuk'
+                        email 'igor.shevchuk@ctco.lv'
+                    }
+                }
+            }
+        }
+    }
+}
+
+release {
+    failOnCommitNeeded = true
+    failOnPublishNeeded = true
+    failOnSnapshotDependencies = true
+    failOnUnversionedFiles = false
+    failOnUpdateNeeded = true
+    revertOnFail = true
+    preTagCommitMessage = '[Gradle Release Plugin] [skip ci] - pre tag commit: '
+    newVersionCommitMessage = '[Gradle Release Plugin] [skip ci] - new version commit: '
+    tagTemplate = '${version}'
+    versionPropertyFile = 'gradle.properties'
+    versionProperties = []
+    buildTasks = ['build']
+
+    git {
+        requireBranch = 'master'
+    }
+}
+
+nexusStaging {
+    packageGroup = "lv.ctco"
+    numberOfRetries = 30
+}
+
+afterReleaseBuild.dependsOn uploadArchives
